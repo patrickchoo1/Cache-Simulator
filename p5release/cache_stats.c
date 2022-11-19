@@ -38,6 +38,15 @@ cache_stats_t *make_cache_stats() {
  * also need to update total_snoop_hits, total_bus_snoops
 */
 void update_stats(cache_stats_t *stats, bool hit_f, bool writeback_f, bool upgrade_miss_f, enum action_t action) {
+  
+  if(action == LD_MISS || action == ST_MISS){
+    stats->n_bus_snoops++;
+      if(hit_f){
+       stats->n_snoop_hits++;
+      }
+    return;
+  }
+  
   if (hit_f)
     stats->n_hits++;
   
@@ -49,7 +58,7 @@ void update_stats(cache_stats_t *stats, bool hit_f, bool writeback_f, bool upgra
   
   if (upgrade_miss_f)
     stats->n_upgrade_miss++;
-
+  
   stats->n_cpu_accesses++;
 }
 
@@ -72,4 +81,3 @@ void calculate_stat_rates(cache_stats_t *stats, int block_size) {
   stats->B_total_traffic_wt = 0;
 
 }
-
