@@ -19,17 +19,17 @@ cache_t *make_cache(int capacity, int block_size, int assoc, enum protocol_t pro
   // note: you may find math.h's log2 function useful
   cache->n_cache_line = capacity/block_size;
   cache->n_set = capacity/(assoc*block_size);
-  cache->n_offset_bit = (int) log2(block_size);
-  cache->n_index_bit = (int) log2(cache->n_set);
+  cache->n_offset_bit = log2(block_size);
+  cache->n_index_bit = log2(cache->n_set);
   cache->n_tag_bit = ADDRESS_SIZE - (cache->n_offset_bit) - (cache->n_index_bit);
 
   // next create the cache lines and the array of LRU bits
   // - malloc an array with n_rows
   // - for each element in the array, malloc another array with n_col
   // FIX THIS CODE!
-  cache->lines = malloc(sizeof(int)*cache->n_set);
+  cache->lines = malloc(sizeof(cache_line_t)* cache->n_set);
   for(int i=0; i<cache->n_set;i++){
-    cache->lines[i] = malloc(sizeof(cache_line_t)*assoc);
+    cache->lines[i] = malloc(sizeof(cache_line_t) * assoc);
   }
   
   cache->lru_way = malloc((cache->n_set) * sizeof(int));
@@ -44,6 +44,10 @@ cache_t *make_cache(int capacity, int block_size, int assoc, enum protocol_t pro
       (cache->lines[i][j]).state = INVALID;
     }
   }
+  for(int i = 0; i < cache->n_set; i++){
+    cache->lru_way[i]=0;
+  }
+
   cache->protocol = protocol;
   cache->lru_on_invalidate_f = lru_on_invalidate_f;
   
@@ -58,34 +62,11 @@ cache_t *make_cache(int capacity, int block_size, int assoc, enum protocol_t pro
  */
 unsigned long get_cache_tag(cache_t *cache, unsigned long addr) {
   // FIX THIS CODE!
-
-  // if the first two character are '0b'
-  // then proceed using binary
-  // take the cache->n_tag_bits starting from the third character
-  // return the tag including 0b
-  
-  //converting decimal to binary
-
-  long mask = ~0;
-  mask = mask << cache->n_tag_bit;
-  addr = addr >> (cache -> n_tag_bit);
+  int mask = ~0;
+  mask = mask >> (ADDRESS_SIZE - cache->n_tag_bit);
+  addr = addr >> (ADDRESS_SIZE - cache->n_tag_bit);
   return addr & mask;
-
-  // if(strcmp(addr[0], '0') && strcmp(addr[1], 'b')){
-  //   bits = cache -> n_tag_bit + 2;
-  //   addr[:bits+1];
-  //   return ;
-  // } 
-  // else{
-  //   int dec[32];
-  //   for(int i =0;i < dec; i++){
-  //     dec[i] = addr %2;
-  //     addr =  addr / 2;
-  // }
-
-  // otherwise proceed using decimal
 }
-
 
 /* Given a configured cache, returns the index portion of the given address.
  *
@@ -95,11 +76,11 @@ unsigned long get_cache_tag(cache_t *cache, unsigned long addr) {
  */
 unsigned long get_cache_index(cache_t *cache, unsigned long addr) {
   // FIX THIS CODE!
-  long mask = ~0;
-  addr = addr >> cache->n_offset_bit;
-  mask = mask << cache->n_offset_bit;
-
-  return addr & mask;
+  uint mask = 0xffffffff;
+  addr = (addr >> cache->n_offset_bit);
+  mask = mask >> (ADDRESS_SIZE - cache->n_index_bit);
+  return mask & addr;
+  
 }
 
 /* Given a configured cache, returns the given address with the offset bits zeroed out.
@@ -109,20 +90,13 @@ unsigned long get_cache_index(cache_t *cache, unsigned long addr) {
  * in decimal -- get_cache_block_addr(3921) returns 3920
  */
 unsigned long get_cache_block_addr(cache_t *cache, unsigned long addr) {
-  // if binary
-  // long mask = 0xffffffff;
-  // mask = mask << cache->n_offset_bit;
+  // fix
+  addr = addr >> cache-> n_offset_bit;
+  addr = addr << cache-> n_offset_bit;
+  // long mask = ~0;
+  // mask = mask >> (ADDRESS_SIZE - cache->n_offset_bit);
   // long baddr = addr & mask;
-  // else
-  // long dec = ~0;
-  // dec = dec << cache->n_offset_bit;
-  // long daddr = addr & dec;
-
-  // 0b0000000000111111111100000000001
-  long mask = ~0;
-  mask = mask << cache->n_offset_bit;
-  long baddr = addr & mask;
-  return baddr;
+  return addr;
 }
 
 
@@ -138,41 +112,49 @@ bool access_cache(cache_t *cache, unsigned long addr, enum action_t action) {
   // FIX THIS CODE!
   int index = get_cache_index(cache, addr);
   int tag = get_cache_tag(cache, addr);
+  bool wb = false;
   switch(action){
     case LOAD:
-      for(int i = 0; i<cache->assoc; i++){
+      for(int i = 0; i < cache->assoc; i++){
         if(cache->lines[index][i].tag == tag && cache->lines[index][i].state == VALID){
           update_stats(cache->stats, true, false, false, LOAD);
+          cache->lru_way[index] = (cache->lru_way[index]+1) % cache->assoc;
           return true;
         }
       }
+      if (cache->lines[index][cache->lru_way[index]].dirty_f == true) wb = true;
       cache->lines[index][cache->lru_way[index]].tag = tag;
       cache->lines[index][cache->lru_way[index]].dirty_f = false;
       cache->lines[index][cache->lru_way[index]].state = VALID;
-      update_stats(cache->stats, false, false, false, LOAD);
+      update_stats(cache->stats, false, wb, false, LOAD);
+      cache->lru_way[index] = (cache->lru_way[index] +1) % cache->assoc;
       return false;
-      break;
 
     case STORE:
-      for(int i = 0; i<cache->assoc; i++){
+      for(int i = 0; i < cache->assoc; i++){
         if(cache->lines[index][i].tag == tag && cache->lines[index][i].state == VALID){
+          cache->lines[index][i].dirty_f = true;
+          cache->lru_way[index] = (cache->lru_way[index] +1) % cache->assoc;
           update_stats(cache->stats, true, false, false, STORE);
           return true;
         }
       }
+      if (cache->lines[index][cache->lru_way[index]].dirty_f == true) wb = true;
+      update_stats(cache->stats, false, wb, false, STORE);
       cache->lines[index][cache->lru_way[index]].tag = tag;
       cache->lines[index][cache->lru_way[index]].dirty_f = true;
       cache->lines[index][cache->lru_way[index]].state = VALID;
-      update_stats(cache->stats, false, false, false, STORE);
+      cache->lru_way[index] = (cache->lru_way[index] +1) % cache->assoc;
       return false;
-      break;
 
     case LD_MISS:
-      break;
+      // for(int i = 0; i < cache->assoc; i ++){
+      //   if(cache->lines[index][i].tag )
+      // }
+      return true;
     case ST_MISS:
-      break;
+      return true;
+
   }
-
-
-  return true;  // cache hit should return true
+  return true;
 }
