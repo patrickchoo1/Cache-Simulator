@@ -66,9 +66,10 @@ unsigned long get_cache_tag(cache_t *cache, unsigned long addr) {
   
   //converting decimal to binary
 
-  addr = addr >> (32 - (cache -> n_tag_bit));
-  addr = addr << (32 - (cache -> n_tag_bit));
-  return addr;
+  long mask = ~0;
+  mask = mask << cache->n_tag_bit;
+  addr = addr >> (cache -> n_tag_bit);
+  return addr & mask;
 
   // if(strcmp(addr[0], '0') && strcmp(addr[1], 'b')){
   //   bits = cache -> n_tag_bit + 2;
@@ -96,9 +97,7 @@ unsigned long get_cache_index(cache_t *cache, unsigned long addr) {
   // FIX THIS CODE!
   long mask = ~0;
   addr = addr >> cache->n_offset_bit;
-  for(int i = 0; i<cache->n_index_bit;i++){
-      mask = mask << 2;
-  }
+  mask = mask << cache->n_offset_bit;
 
   return addr & mask;
 }
