@@ -114,107 +114,122 @@ bool access_cache(cache_t *cache, unsigned long addr, enum action_t action) {
   int tag = get_cache_tag(cache, addr);
   bool hit = false;
   bool wb = false;
+  int * lru = cache->lru_way;
+  cache_line_t *set = cache->lines[index];
+
   if(cache->protocol == MSI){
-    return msi(cache, addr, action);
+    hit = msi(cache, addr, action);
+    return hit;
   }
 
   switch(action){
     case LOAD:
       for(int i = 0; i < cache->assoc; i++){
-        if(cache->lines[index][i].tag == tag && cache->lines[index][i].state == VALID){
+        if(set[i].tag == tag && set[i].state == VALID){
+          log_way(i);
+          log_set(index);
           update_stats(cache->stats, true, false, false, LOAD);
-          cache->lru_way[index] = (cache->lru_way[index]+1) % cache->assoc;
+          lru[index] = (i +1) % cache->assoc;
           return true;
         }
       }
-
-      if (cache->lines[index][cache->lru_way[index]].dirty_f == true) wb = true;
-      cache->lines[index][cache->lru_way[index]].tag = tag;
-      cache->lines[index][cache->lru_way[index]].dirty_f = false;
-      cache->lines[index][cache->lru_way[index]].state = VALID;
+      log_way(lru[index]);
+      log_set(index);
+      if (set[lru[index]].dirty_f == true && set[lru[index]].state==VALID) wb = true;
+      set[lru[index]].tag = tag;
+      set[lru[index]].dirty_f = false;
+      set[lru[index]].state = VALID;
       update_stats(cache->stats, false, wb, false, LOAD);
-      cache->lru_way[index] = (cache->lru_way[index] +1) % cache->assoc;
+      lru[index] = (lru[index] +1) % cache->assoc;
       return false;
 
     case STORE:
       for(int i = 0; i < cache->assoc; i++){
-        if(cache->lines[index][i].tag == tag && cache->lines[index][i].state == VALID){
-          cache->lines[index][i].dirty_f = true;
-          cache->lru_way[index] = (cache->lru_way[index] +1) % cache->assoc;
+        if(set[i].tag == tag && set[i].state == VALID){
+          log_way(i);
+          log_set(index);
+          set[i].dirty_f = true;
+          cache->lru_way[index] = (i +1) % cache->assoc;
           update_stats(cache->stats, true, false, false, STORE);
           return true;
         }
       }
-      if (cache->lines[index][cache->lru_way[index]].dirty_f == true) wb = true;
+      if (set[lru[index]].dirty_f == true && set[lru[index]].state==VALID) wb = true;
+      log_way(lru[index]);
+      log_set(index);
       update_stats(cache->stats, false, wb, false, STORE);
-      cache->lines[index][cache->lru_way[index]].tag = tag;
-      cache->lines[index][cache->lru_way[index]].dirty_f = true;
-      cache->lines[index][cache->lru_way[index]].state = VALID;
-      cache->lru_way[index] = (cache->lru_way[index] +1) % cache->assoc;
+      set[lru[index]].tag = tag;
+      set[lru[index]].dirty_f = true;
+      set[lru[index]].state = VALID;
+      lru[index] = (lru[index] +1) % cache->assoc;
       return false;
 
     case LD_MISS:
       for(int i = 0; i < cache->assoc; i++){
-        if(cache->lines[index][i].tag == tag && cache->lines[index][i].state == VALID){
+        if(set[i].tag == tag && set[i].state == VALID){
           hit = true;
           if(cache->protocol == VI){
-            if (cache->lines[index][i].dirty_f == true) update_stats(cache->stats,hit,wb,false,LD_MISS);
-            cache->lines[index][i].state = INVALID;
-            return false;
+            if (set[i].dirty_f == true) update_stats(cache->stats,hit,true,false,LD_MISS);
+            set[i].state = INVALID;
+            return hit;
           }
         }
       }
       update_stats(cache->stats,hit,false,false,LD_MISS);
-      return false;
+      return hit;
     
     case ST_MISS:
       for(int i = 0; i < cache->assoc; i++){
-          if(cache->lines[index][i].tag == tag && cache->lines[index][i].state == VALID){
+          if(set[i].tag == tag && set[i].state == VALID){
             hit = true;
             if (cache->protocol == VI) {
-              if (cache->lines[index][i].dirty_f == true) update_stats(cache->stats,hit,wb,false,ST_MISS);
-              cache->lines[index][i].state = INVALID;
-              return false;
+              if (set[i].dirty_f == true) update_stats(cache->stats,hit,true,false,ST_MISS);
+              set[i].state = INVALID;
+              return true;
             }
           }
       }
       update_stats(cache->stats, hit, false, false, ST_MISS);
-      return false;
+      return hit;
 
   }
   return true;
 }
 
-bool msi(cache_t *cache, unsigned long addr,enum action_t action){
+
+
+bool msi(cache_t *cache, unsigned long addr, enum action_t action){
   int index = get_cache_index(cache, addr);
   int tag = get_cache_tag(cache, addr);
   bool hit = false;
   bool wb = false;
+  bool upgrade_miss = false;
+  int * lru = cache->lru_way;
+  cache_line_t *set = cache->lines[index];
+
   switch(action){
     case LOAD:
     // IF invalid, turns to shared
     // IF modified, stays at modified
     // IF shared, stays at shared
       for(int i = 0; i < cache->assoc; i++){
-        if(cache->lines[index][i].tag == tag && cache->lines[index][i].state != INVALID){
+        if(set[i].tag == tag && set[i].state != INVALID){
           update_stats(cache->stats, true, false, false, LOAD);
-          cache->lru_way[index] = (cache->lru_way[index]+1) % cache->assoc;
+          log_way(i);
+          log_set(index);
+          lru[index] = (i+1) % cache->assoc;
           return true;
-        }else if(cache->lines[index][i].tag == tag && cache->lines[index][i].state == INVALID){
-          update_stats(cache->stats, false, false, false, LOAD);
-          cache->lines[index][i].tag = tag;
-          cache->lines[index][i].dirty_f = false;
-          cache->lines[index][i].state = SHARED;
-          return false;
         }
       }
 
-      if (cache->lines[index][cache->lru_way[index]].dirty_f == true) wb = true;
-      cache->lines[index][cache->lru_way[index]].tag = tag;
-      cache->lines[index][cache->lru_way[index]].dirty_f = false;
-      cache->lines[index][cache->lru_way[index]].state = VALID;
+      if (set[lru[index]].dirty_f == true && set[lru[index]].state == MODIFIED) wb = true;
+      set[lru[index]].tag = tag;
+      set[lru[index]].dirty_f = false;
+      set[lru[index]].state = SHARED;
+      log_way(lru[index]);
+      log_set(index);
       update_stats(cache->stats, false, wb, false, LOAD);
-      cache->lru_way[index] = (cache->lru_way[index] +1) % cache->assoc;
+      lru[index] = (lru[index] +1) % cache->assoc;
       return false;
 
     case STORE:
@@ -222,20 +237,25 @@ bool msi(cache_t *cache, unsigned long addr,enum action_t action){
       // IF modified, stays at modified
       // IF shared, then turns to modified
       for(int i = 0; i < cache->assoc; i++){
-        if(cache->lines[index][i].tag == tag){
-          cache->lines[index][i].dirty_f = true;
-          cache->lru_way[index] = (cache->lru_way[index] +1) % cache->assoc;
+        if(set[i].tag == tag && set[i].state != INVALID){
+          set[i].dirty_f = true;
+          lru[index] = (lru[index] +1) % cache->assoc;
+          log_way(i);
+          log_set(index);
           update_stats(cache->stats, true, false, false, STORE);
-          cache->lines[index][cache->lru_way[index]].state = MODIFIED;
+          set[lru[index]].state = MODIFIED;
           return true;
         }
       }
-      if (cache->lines[index][cache->lru_way[index]].dirty_f == true) wb = true;
+
+      if (set[lru[index]].dirty_f == true && set[lru[index]].state == MODIFIED) wb = true;
       update_stats(cache->stats, false, wb, false, STORE);
-      cache->lines[index][cache->lru_way[index]].tag = tag;
-      cache->lines[index][cache->lru_way[index]].dirty_f = true;
-      cache->lines[index][cache->lru_way[index]].state = MODIFIED;
-      cache->lru_way[index] = (cache->lru_way[index] +1) % cache->assoc;
+      log_way(lru[index]);
+      log_set(index);
+      set[lru[index]].tag = tag;
+      set[lru[index]].dirty_f = true;
+      set[lru[index]].state = MODIFIED;
+      lru[index] = (lru[index] +1) % cache->assoc;
       return false;
 
     case LD_MISS:
@@ -243,36 +263,29 @@ bool msi(cache_t *cache, unsigned long addr,enum action_t action){
       // IF modified, then turns to shared (wb)
       // IF shared, then stays at shared
       for(int i = 0; i < cache->assoc; i++){
-        if(cache->lines[index][i].tag == tag && cache->lines[index][i].state == VALID){
+        if(set[i].tag == tag && set[i].state != INVALID){
           hit = true;
-          if(cache->protocol == VI){
-            if (cache->lines[index][i].dirty_f == true) update_stats(cache->stats,hit,wb,false,LD_MISS);
-            cache->lines[index][i].state = INVALID;
-            return false;
-          }
+          if(set[i].state == MODIFIED) wb = true;
+          set[i].state = SHARED;
         }
       }
-      update_stats(cache->stats,hit,false,false,LD_MISS);
-      return false;
+      update_stats(cache->stats,hit,wb,false,LD_MISS);
+      return hit;
     
     case ST_MISS:
-      // IF invalid, stays at invlaid
+      // IF invalid, stays at invalid
       // IF modified, then turns to invalid (wb)
       // IF shared, then turns to invalid
       for(int i = 0; i < cache->assoc; i++){
-          if(cache->lines[index][i].tag == tag){
+          if(set[i].tag == tag && set[i].state != INVALID){
             hit = true;
-            if (cache->lines[index][i].state == MODIFIED) {
-              update_stats(cache->stats,hit,wb,false,ST_MISS);
-            }
-            // if (cache->protocol == VI) {
-            //   if (cache->lines[index][i].dirty_f == true) update_stats(cache->stats,hit,wb,false,ST_MISS);
-            //   cache->lines[index][i].state = INVALID;
-            //   return false;
-            }
+            if (set[i].state == MODIFIED) wb = true;
+            if (set[i].state == SHARED) upgrade_miss = true;
+            set[i].state = INVALID;
           }
       }
-      update_stats(cache->stats, hit, false, false, ST_MISS);
-      return false;
+      update_stats(cache->stats, hit, wb, upgrade_miss, ST_MISS);
+      return hit;
+  }
   return true;
 }

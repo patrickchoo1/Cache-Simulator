@@ -57,5 +57,6 @@ unsigned long get_cache_tag(cache_t *cache, unsigned long addr);
 unsigned long get_cache_index(cache_t *cache, unsigned long addr);
 unsigned long get_cache_block_addr(cache_t *cache, unsigned long addr);
 bool access_cache(cache_t *cache, unsigned long addr, enum action_t action);
+bool msi(cache_t *cache, unsigned long addr, enum action_t action);
 
 #endif  // CACHE
