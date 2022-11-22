@@ -67,17 +67,10 @@ void calculate_stat_rates(cache_stats_t *stats, int block_size) {
 
   stats->hit_rate = stats->n_hits / (double)stats->n_cpu_accesses;
 
-  // FIX THIS CODE!
-  // you will need to modify this function in order to properly
-  // calculate wb and wt data
-
-  // number of misses * block size
   stats->B_bus_to_cache = (stats->n_cpu_accesses - stats->n_hits) * block_size;
-  // number of writeback * block size
   stats->B_cache_to_bus_wb = stats->n_writebacks * block_size;
   stats->B_cache_to_bus_wt = 0;
-  // fix
-  stats->B_total_traffic_wb = stats->B_bus_to_cache+stats->B_cache_to_bus_wb;
+  stats->B_total_traffic_wb = stats->B_bus_to_cache + stats->B_cache_to_bus_wb;
   stats->B_total_traffic_wt = 0;
 
 }
